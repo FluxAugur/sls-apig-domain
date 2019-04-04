@@ -1,0 +1,103 @@
+service: sls-apig-domain-utils
+
+provider:
+  name: aws
+  runtime: nodejs8.10
+  stage: ${opt:stage, env:SLS_STAGE, 'dev'}
+  region: ${opt:region, env:SLS_REGION, 'us-east-1'}
+  stackName: ${self:service}-${self:provider.stage}
+  disableRollback: true
+  apiName: ${self:provider.stackName}
+  profile: ${opt:aws-profile, env:AWS_PROFILE, env:AWS_DEFAULT_PROFILE, 'default'}
+  memorySize: 128
+  timeout: 10
+  logRetentionInDays: 14
+  deploymentBucket:
+    name: ${self:service}-${self:provider.region}-deploys
+    serverSideEncryption: AES256
+  environment:
+    SERVICE_NAME: ${self:service}
+
+custom:
+  apiDomainName: api.${self:custom.rootDomainName}
+  #   deploymentBucket:
+  #     versioning: false # default is true
+  customDomain: # TODO: https://github.com/amplify-education/serverless-domain-manager/blob/master/scripts/cloudformation/serverless-domain-manager-deploy-policy.yaml
+    domainName: ${self:custom.domains.${self:provider.stage}}
+    basePath: 'utils'
+    stage: ${self:provider.stage}
+    # certificateName: dev-api.nathanialmcconnell.name
+    # certificateArn: '#{IssuedCertificate}'
+    # createRoute53Record: false # default is true
+    # endpointType: regional # default is edge
+    # hostedZoneId: ${self:custom.hostedZoneId}
+    # hostedZonePrivate: false
+    # enabled: false # default is true
+  domains:
+    dev: dev-${self:custom.apiDomainName}
+    prod: ${self:custom.apiDomainName}
+    staging: staging-${self:custom.apiDomainName}
+  hostedZoneId: Z3GHCWB8V7K4G7
+  # pseudoParameters:
+  #   allowReferences: false # default is true
+  #   skipRegionReplace: false # default is true
+  rootDomainName: nathanialmcconnell.name
+  serviceToken: arn:aws:lambda:${self:provider.region}:#{AWS::AccountId}:function:binxio-cfn-certificate-provider
+  # splitStacks:
+  #   perFunction: true # default is false
+  #   perType: false # default is true
+
+functions:
+  - ${file(src/handlers/utils.serverless.yml)}
+
+resources:
+  Resources:
+    Certificate:
+      Type: Custom::Certificate
+      Description: ACM SSL certificate
+      Properties:
+        DomainName: ${self:custom.customDomain.domainName}
+        ValidationMethod: DNS
+        ServiceToken: '${self:custom.serviceToken}'
+    IssuedCertificate:
+      Type: Custom::IssuedCertificate
+      Properties:
+        CertificateArn: '#{Certificate}'
+        ServiceToken: '${self:custom.serviceToken}'
+    CertificateDNSRecord:
+      Type: Custom::CertificateDNSRecord
+      Properties:
+        CertificateArn: '#{Certificate}'
+        DomainName: ${self:custom.customDomain.domainName}
+        ServiceToken: '${self:custom.serviceToken}'
+    DomainValidationRecord:
+      Type: AWS::Route53::RecordSetGroup
+      Properties:
+        HostedZoneId: ${self:custom.hostedZoneId}
+        RecordSets:
+          - Name: '#{CertificateDNSRecord.Name}'
+            Type: '#{CertificateDNSRecord.Type}'
+            TTL: 60
+            Weight: 1
+            SetIdentifier: '#{Certificate}'
+            ResourceRecords:
+              - '#{CertificateDNSRecord.Value}'
+  Outputs:
+    IssuedCertificateArn:
+      Value: '#{IssuedCertificate}'
+
+plugins:
+  # https://github.com/MikeSouza/serverless-deployment-bucket
+  - serverless-deployment-bucket
+  # https://github.com/amplify-education/serverless-domain-manager
+  - serverless-domain-manager
+  # https://github.com/dherault/serverless-offline
+  - serverless-offline
+  # https://github.com/dougmoscrop/serverless-plugin-common-excludes
+  - serverless-plugin-common-excludes
+  # https://github.com/yonomi/serverless-plugin-encode-env-var-objects
+  - serverless-plugin-encode-env-var-objects
+  # https://github.com/svdgraaf/serverless-pseudo-parameters
+  - serverless-pseudo-parameters
+  # https://github.com/dougmoscrop/serverless-plugin-split-stacks
+  - serverless-plugin-split-stacks

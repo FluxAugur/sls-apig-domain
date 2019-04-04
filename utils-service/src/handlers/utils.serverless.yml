@@ -1,0 +1,18 @@
+currentTime:
+  handler: src/handlers/current-time.get
+  events:
+    - http: GET ping
+  tags:
+    METHOD: get
+goodbye:
+  handler: src/handlers/goodbye.get
+  events:
+    - http: GET goodbye
+  tags:
+    METHOD: get
+hello:
+  handler: src/handlers/hello.get
+  events:
+    - http: GET hello
+  tags:
+    METHOD: get

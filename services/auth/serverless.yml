@@ -1,0 +1,105 @@
+service: sls-apig-domain-auth
+
+provider:
+  name: aws
+  runtime: nodejs8.10
+  stage: ${opt:stage, env:SLS_STAGE, 'dev'}
+  region: ${opt:region, env:SLS_REGION, 'us-east-1'}
+  stackName: ${self:provider.stage}-${self:service}
+  disableRollback: true
+  apiName: ${self:provider.stackName}
+  profile: ${opt:aws-profile, env:AWS_PROFILE, env:AWS_DEFAULT_PROFILE, 'default'}
+  memorySize: 128
+  timeout: 10
+  logRetentionInDays: 14
+  deploymentBucket:
+    name: ${self:provider.region}-${self:service}-deploys
+    serverSideEncryption: AES256
+
+resources:
+  Resources:
+    CognitoUserPool:
+      Type: AWS::Cognito::UserPool
+      Properties:
+        UserPoolName: ${self:provider.stage}-sls-apig-domain-user-pool
+        UsernameAttributes:
+          - email
+        AutoVerifiedAttributes:
+          - email
+    CognitoUserPoolClient:
+      Type: AWS::Cognito::UserPoolClient
+      Properties:
+        ClientName: ${self:provider.stage}-sls-apig-domain-user-pool-client
+        UserPoolId: '#{CognitoUserPool}'
+        ExplicitAuthFlows:
+          - ADMIN_NO_SRP_AUTH
+        GenerateSecret: false
+    CognitoIdentityPool:
+      Type: AWS::Cognito::IdentityPool
+      Properties:
+        IdentityPoolName: ${self:provider.stage}MonoIdentityPool
+        AllowUnauthenticatedIdentities: false
+        CognitoIdentityProviders:
+          - ClientId: '#{CognitoUserPoolClient}'
+            ProviderName: '#{CognitoUserPool.ProviderName}'
+    CognitoIdentityPoolRoles:
+      Type: AWS::Cognito::IdentityPoolRoleAttachment
+      Properties:
+        IdentityPoolId: '#{CognitoIdentityPool}'
+        Roles:
+          authenticated: '#{CognitoAuthRole.Arn}'
+    CognitoAuthRole:
+      Type: AWS::IAM::Role
+      Properties:
+        Path: /
+        AssumeRolePolicyDocument:
+          Version: '20120-10-17'
+          Statement:
+            - Effect: Allow
+              Principal:
+                Federated: cognito-identity.amazonaws.com
+              Action:
+                - sts:AssumeRoleWithWebIdentity
+              Condition:
+                StringEquals:
+                  cognito-identity.amazonaws.com:aud: '#{CognitoIdentityPool}'
+                ForAnyValue:
+                  StringLike:
+                    cognito-identity.amazonaws.com:amr: authenticated
+        Policies:
+          - PolicyName: CognitoAuthorizedPolicy
+            PolicyDocument:
+              Version: '2012-10-17'
+              Statement:
+                - Effect: Allow
+                  Action:
+                    - mobileanalytics:PutEvents
+                    - 'cognito-sync:*'
+                    - 'cognito-identity:*'
+                  Resource: '*'
+                - Effect: Allow
+                  Action:
+                    - execute-api:Invoke
+                  Resource: 'arn:aws:execute-api:#{AWS::Region}:#{AWS::AccountId}:Fn::ImportValue:${self:provider.stage}-ApiGatewayRestApiId:*'
+                - Effect: Allow
+                  Action:
+                    - 's3:*'
+                  Resource: 'Fn::ImportValue:${self:provider.stage}-AttachmentsBucketArn/private/${cognito-identity.amazonaws.com:sub}/*'
+
+  Outputs:
+    UserPoolId:
+      Value: '#{CognitoUserPool}'
+    UserPoolClientId:
+      Value: '#{CognitoUserPoolClient}'
+    IdentityPoolId:
+      Value: '#{CognitoIdentityPool}'
+
+plugins:
+  # https://github.com/MikeSouza/serverless-deployment-bucket
+  - serverless-deployment-bucket
+  # https://github.com/dherault/serverless-offline
+  - serverless-offline
+  # https://github.com/dougmoscrop/serverless-plugin-common-excludes
+  - serverless-plugin-common-excludes
+  # https://github.com/svdgraaf/serverless-pseudo-parameters
+  - serverless-pseudo-parameters
